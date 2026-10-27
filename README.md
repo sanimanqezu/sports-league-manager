@@ -1,21 +1,32 @@
 # Sports League Manager
 
-A production-ready RESTful API for managing sports leagues, teams, players, fixtures, and match results. Built with Spring Boot 3.2.5 as a portfolio project.
+[![CI](https://github.com/sanimanqezu/sports-league-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/sanimanqezu/sports-league-manager/actions/workflows/ci.yml)
+
+A RESTful API for managing sports leagues, teams, players, fixtures, and match results, with live league standings computed from recorded results.
 
 ## Tech Stack
 
-| Layer        | Technology                        |
-|--------------|-----------------------------------|
-| Language     | Java 17                           |
-| Framework    | Spring Boot 3.2.5                 |
-| Persistence  | Spring Data JPA + Hibernate       |
-| Database     | PostgreSQL (runtime), H2 (tests)  |
-| Migrations   | Flyway                            |
-| Validation   | Jakarta Bean Validation           |
-| Docs         | SpringDoc OpenAPI 2.3 (Swagger)   |
-| Testing      | JUnit 5 + Mockito                 |
-| Build        | Maven                             |
-| Container    | Docker + Docker Compose           |
+| Layer        | Technology                           |
+|--------------|--------------------------------------|
+| Language     | Java 25                              |
+| Framework    | Spring Boot 3.5.16                   |
+| Persistence  | Spring Data JPA + Hibernate          |
+| Database     | PostgreSQL (runtime), H2 (tests)     |
+| Migrations   | Flyway                               |
+| Validation   | Jakarta Bean Validation              |
+| Docs         | SpringDoc OpenAPI 2.3 (Swagger)      |
+| Testing      | JUnit 5, Mockito, AssertJ, MockMvc   |
+| Build        | Maven                               |
+| Container    | Docker + Docker Compose              |
+
+## Key Design Points
+
+- **Layered architecture** — thin REST controllers delegate to transactional services; repositories are pure Spring Data JPA.
+- **DTOs as records** — request/response payloads are immutable Java records with Jakarta Bean Validation on the inbound side; entities never leak across the API boundary.
+- **Centralized exception handling** — a single `@RestControllerAdvice` maps `ResourceNotFoundException` to 404, `BadRequestException` to 400, and bean-validation failures to 400, all rendered as RFC 7807 `ProblemDetail` responses.
+- **Read-optimized transactions** — services are `@Transactional(readOnly = true)` by default, with write methods promoted to read-write transactions.
+- **Standings computed on read** — the table is aggregated from persisted results on each request (3/1/0 points, tie-broken by goal difference then goals for), so no derived state has to be kept in sync.
+- **Database migrations as code** — schema is owned by Flyway; Hibernate runs in `ddl-auto: validate` against the migrated schema.
 
 ## Domain Model
 
@@ -82,58 +93,50 @@ Once the application is running, visit:
 
 **OpenAPI JSON:** [http://localhost:8080/api-docs](http://localhost:8080/api-docs)
 
-## Running with Docker Compose
+## Running Locally
 
-The easiest way to run the full stack locally:
+This service connects to a **centralized PostgreSQL** shared across the portfolio rather than its own database. The connection is driven entirely by environment variables (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`) — see `.env.example`.
 
-```bash
-# Clone the repo
-git clone https://github.com/sanele/sports-league-manager.git
-cd sports-league-manager
-
-# Build image and start app + PostgreSQL
-docker compose up --build
-
-# Stop and remove containers
-docker compose down
-
-# Stop and remove containers + volumes
-docker compose down -v
-```
-
-The application will be available at `http://localhost:8080`.
-
-## Running Locally (without Docker)
-
-**Prerequisites:** Java 17, Maven, PostgreSQL running on port 5432
+**Prerequisites:** Java 25, Maven, and the shared Postgres container running.
 
 ```bash
-# Create the database
-psql -U postgres -c "CREATE DATABASE sports_league;"
+# 1. Start the centralized Postgres once, from the portfolio root
+docker compose up -d
 
-# Run the application
-./mvnw spring-boot:run
+# 2. Run the application (defaults connect to localhost:5432/sports_league)
+mvn spring-boot:run
 ```
 
-Or with custom DB credentials:
+Override any of the defaults via environment variables when the central DB lives elsewhere:
 
 ```bash
 export DB_HOST=localhost
 export DB_PORT=5432
 export DB_NAME=sports_league
-export DB_USERNAME=myuser
-export DB_PASSWORD=mypassword
+export DB_USERNAME=postgres
+export DB_PASSWORD=postgres
 
-./mvnw spring-boot:run
+mvn spring-boot:run
 ```
 
-## Running Tests
-
-Tests use H2 in-memory database — no PostgreSQL required.
+The `docker-compose.yml` in this repo builds the app image and attaches it to the external `portfolio-net` network so it can reach the shared database:
 
 ```bash
-./mvnw test
+docker compose up --build
 ```
+
+The application will be available at `http://localhost:8080`.
+
+## Tests
+
+```bash
+mvn test
+```
+
+The suite is **59 tests** and needs no database or network — it runs against mocks and an in-memory H2 schema.
+
+- **Service-layer unit tests** (`@ExtendWith(MockitoExtension.class)`, `@Mock` repositories, `@InjectMocks` service) cover each service's happy path, not-found handling, and domain rules — including result recording, duplicate/played-fixture rejection, same-team fixture rejection, and the standings computation (points, sorting, goal-difference tie-breaks, goal tracking).
+- **Controller slice tests** (`@WebMvcTest`, `@MockitoBean` service) verify status codes and request delegation, that invalid payloads return **400**, and that the `GlobalExceptionHandler` maps `ResourceNotFoundException` to **404** and `BadRequestException` to **400** as `ProblemDetail` bodies.
 
 ## Example Requests
 
@@ -180,8 +183,9 @@ src/
 │       ├── application.yml
 │       └── db/migration/     # Flyway SQL migrations
 └── test/
-    ├── java/com/sanele/sportsleague/service/
-    │   └── ResultServiceTest.java
+    ├── java/com/sanele/sportsleague/
+    │   ├── controller/       # @WebMvcTest slice tests
+    │   └── service/          # Mockito unit tests
     └── resources/
         └── application.yml   # H2 test config
 ```

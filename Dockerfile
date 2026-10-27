@@ -1,5 +1,5 @@
 # ---- Build Stage ----
-FROM maven:3.9.6-eclipse-temurin-17 AS build
+FROM maven:3-eclipse-temurin-25 AS build
 WORKDIR /app
 
 # Copy pom.xml first to leverage Docker layer caching
@@ -11,7 +11,7 @@ COPY src ./src
 RUN mvn clean package -DskipTests -B
 
 # ---- Runtime Stage ----
-FROM eclipse-temurin:17-jre-alpine
+FROM eclipse-temurin:25-jre-alpine
 WORKDIR /app
 
 # Create non-root user for security
